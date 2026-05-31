@@ -18,6 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from adjustText import adjust_text
 # empty list to store text objects
 texts = []
+coord_labels = {}
 
 # read datasets
 logfold_raw= pd.read_csv('primary-screen-replicate-collapsed-logfold-change.csv', index_col=0)
@@ -234,17 +235,37 @@ texts = []
 # 4. Loop to generate the text objects (No plt.annotate inside here!)
 for i, txt in enumerate(anticancer_drugs):
     # Tip: You can change this to just `txt` if you want the full name now!
-    label_text = f"{anticancer_drugs[i][:5]}" 
+    x = round(X_scores_anticancer[i, 0], 4)
+    y = round(X_scores_anticancer[i, 1], 4)
+    coord_key = (x, y)
+    label_text = f"{anticancer_drugs[i][:5]}"
+    
+    if coord_key in coord_labels:
+        # If this coordinate already exists, append the name if it's not a literal duplicate string
+        if label_text not in coord_labels[coord_key]["names"]:
+            coord_labels[coord_key]["names"].append(label_text)
+    else:
+        # Otherwise, create a new entry
+        coord_labels[coord_key] = {
+            "names": [label_text],
+            "orig_x": X_scores_anticancer[i, 0],
+            "orig_y": X_scores_anticancer[i, 1]
+        }
+    # 4. Loop through our clean, unique coordinates to generate the text objects
+for coord, data in coord_labels.items():
+    # Join overlapping names with a comma or a newline '\n'
+    combined_text = ", ".join(data["names"]) 
     
     texts.append(
         plt.text(
-            X_scores_anticancer[i, 0],
-            X_scores_anticancer[i, 1],
-            label_text,
+            data["orig_x"],
+            data["orig_y"],
+            combined_text,
             fontsize=8,
             bbox=dict(boxstyle="round,pad=0.2", alpha=0.3),
         )
     )
+    
 
 # 5. Call adjust_text ONCE out of the loop to clean them all up simultaneously
 adjust_text(
