@@ -13,10 +13,10 @@ import numpy as np
 import  matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.model_selection import LeaveOneGroupOut, cross_val_predict
+from sklearn.model_selection import cross_val_predict
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
-
+## 1. PREPROCESSING ##
 # read datasets
 logfold_raw= pd.read_csv('primary-screen-replicate-collapsed-logfold-change.csv', index_col=0)
 drug_metadata= pd.read_csv('biomarkers.csv')
@@ -73,7 +73,7 @@ Y_test = Y_final[is_noncancer].values
 print(f"Training set size (Cancer drugs): {X_train.shape[0]}")
 print(f"Testing set size (Noncancer drugs): {X_test.shape[0]}")
 
-# PCA Biplot
+## 2. PCA BIPLOTS ##
 scaler= StandardScaler() # standardization step
 Yscaled= scaler.fit_transform(Y_matrix)
 
@@ -95,7 +95,7 @@ drug_metadata['column_name'] = drug_metadata['column_name'].astype(str).str.stri
 cat_map = drug_metadata.set_index('column_name')['drug_category'].to_dict()
 pca_df['Category'] = [cat_map.get(col, 'Unknown') for col in Y_matrix.index]
 
-# PCA Scores Plot
+# A. PCA Scores Plot - PC1 vs. PC2 #
 plt.clf()
 colors = {'targeted cancer': '#a15bd4',
         'noncancer': '#748CAA',
@@ -193,7 +193,9 @@ plt.title("PCA Biplot: Drug Response + Target Structure")
 plt.legend()
 plt.show()
 
-# PLSR
+# B. PC2 vs PC3 #
+
+## 3. PLSR ##
 # cross validation to determine the optimal number of components
 n_samples=X_train.shape[0]
 test_comps=range(1,15) # arbitrary range of number of components to test
@@ -284,8 +286,7 @@ X_scores_anticancer= X_test_scores[anticancer_ind]
 X_loadings= plsr.x_loadings_
 feature_names= X_final.columns.values
 
-# scores plot
-# Create the figure
+## 4. PLSR SCORES AND LOADINGS PLOTS ##
 plt.figure()
 
 # 1. Plot the background points first (so they sit underneath)
