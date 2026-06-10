@@ -1,0 +1,1010 @@
+!pip install adjustText
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.model_selection import LeaveOneGroupOut, cross_val_predict, KFold
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+from scipy.stats import pearsonr, spearmanr
+from adjustText import adjust_text
+from sklearn.ensemble import RandomForestRegressor
+
+#---- Preprocessing Stage -----#
+def load_and_prepare_data(logfold_file,metadata_file):
+    """
+    Full Preprocessing pipeline:
+    - Remove missing cells in logfold data
+    - Keep drugs in both data sets
+    - Align metadata to drugs and fill in missing target labels 
+    - Make both X and Y matrices
+    - Synchronize the feature and response matrices
+    - Create the cancer and non-cancer groups
+    - Build training and testing sets 
+    """
+    logfold_raw= pd.read_csv(logfold_file, index_col=0)
+    drug_metadata= pd.read_csv(metadata_file)
+
+    # drop cell lines with missing data NaN
+    logfold_v2 = logfold_raw.dropna(axis=0).dropna(axis=1)
+
+    print(f"Original shape: {logfold_raw.shape}")
+    print(f"Shape after dropping drug and cell lines with NaNs: {logfold_v2.shape}")
+
+    # cleaning drug dataset - clean missing identifiers and strip whitespace from matching columns
+    drug_metadata = drug_metadata.dropna(subset=['column_name'])
+    drug_metadata['column_name'] = drug_metadata['column_name'].str.strip()
+    logfold_v2.columns = logfold_v2.columns.str.strip()
+
+    # Extract the alignment keys that exist simultaneously in both datasets
+    valid_drug_keys = logfold_v2.columns.intersection(drug_metadata['column_name'])
+
+    # Filter target matrix to only retain matched compounds
+    logfold_v3 = logfold_v2[valid_drug_keys]
+    Y_matrix = logfold_v3.T # to make drug rows (to match biomarker data)
+
+    # Set the index of your drug metadata to match the filtered layout
+    drug_metadata_filtered = drug_metadata[drug_metadata['column_name'].isin(valid_drug_keys)].set_index('column_name')
+
+    print(f"Shape of filtered metadata: {drug_metadata_filtered.shape}")
+
+    # Fill missing targets with a placeholder string before encoding
+    drug_metadata_filtered['target'] = drug_metadata_filtered['target'].fillna('Unknown_Target')
+
+    # One-hot encode the target proteins
+    X_features = pd.get_dummies(drug_metadata_filtered['target'], prefix='target')
+
+    # Group by the index (column_name) just in case a drug maps to multiple targets
+    X_features = X_features.groupby(X_features.index).sum()
+
+    # Reindex both matrices to ensure identical row order
+    common_indices = X_features.index.intersection(Y_matrix.index)
+    X_final = X_features.loc[common_indices]
+    Y_final = Y_matrix.loc[common_indices]
+
+    # Create masks using the drug_category column from your filtered metadata
+    is_cancer = drug_metadata_filtered.loc[common_indices, 'drug_category'] == 'targeted cancer'
+    is_noncancer = drug_metadata_filtered.loc[common_indices, 'drug_category'] == 'noncancer'
+
+    # Training Set (Targeted Cancer Drugs)
+    X_train = X_final[is_cancer].values
+    Y_train = Y_final[is_cancer].values
+
+    # Testing Set (Noncancer Drugs)
+    X_test = X_final[is_noncancer].values
+    Y_test = Y_final[is_noncancer].values
+
+    return {
+        "X_train": X_train,
+        "Y_train": Y_train,
+        "X_test": X_test,
+        "Y_test": Y_test,
+        "X_final": X_final,
+        "Y_final": Y_final,
+        "metadata": drug_metadata,
+        "metadata_filtered": drug_metadata_filtered,
+        "Y_matrix": Y_matrix,
+        "common_indices": common_indices,
+        "is_cancer": is_cancer,
+        "is_noncancer": is_noncancer}
+
+#Call our dataset and values
+data = load_and_prepare_data(
+"primary-screen-replicate-collapsed-logfold-change.csv",
+"biomarkers.csv")
+
+X_train = data["X_train"]
+X_test = data["X_test"]
+Y_train = data["Y_train"]
+Y_test = data["Y_test"]
+X_final = data["X_final"]
+Y_final = data["Y_final"]
+drug_metadata = data ["metadata"]
+drug_metadata_filtered = data["metadata_filtered"]
+Y_matrix = data["Y_matrix"]
+common_indices = data["common_indices"]
+is_cancer = data["is_cancer"]
+is_noncancer = data["is_noncancer"]
+
+#Results of the Cancer and Noncancer drugs after processing
+print(f"Training set size (Cancer drugs): {X_train.shape[0]}")
+print(f"Testing set size (Noncancer drugs): {X_test.shape[0]}")
+
+#--- Components Selection for PLSR ---#
+def pls_components_selection_pipeline(X_train, Y_train):
+    """
+    Full Components Section pipeline:
+    - 
+    """   
+    
+    test_comps = range(1, 15)
+    cv = KFold(n_splits=10, shuffle=True, random_state=42)
+
+    cv_mse_scores = []
+    Q2Ys = []
+
+    # Compute baseline
+    Y_mean = np.mean(Y_train, axis=0)
+    tss = np.sum((Y_train - Y_mean) ** 2)
+
+    # Model Selection
+    for n_comp in test_comps:
+
+        model = PLSRegression(n_components=n_comp)
+
+        Y_cv_pred = cross_val_predict(
+            model,
+            X_train,
+            Y_train,
+            cv=cv
+        )
+
+        # MSE
+        mse = mean_squared_error(Y_train, Y_cv_pred)
+        cv_mse_scores.append(mse)
+
+        # Q²Y
+        press = np.sum((Y_train - Y_cv_pred) ** 2)
+        q2 = 1 - (press / tss)
+        Q2Ys.append(q2)
+
+    cv_mse_scores = np.array(cv_mse_scores)
+    Q2Ys = np.array(Q2Ys)
+
+    # Normalize MSE and Q2Y value
+    mse_norm = (cv_mse_scores - cv_mse_scores.min()) / (np.ptp(cv_mse_scores))
+    q2_norm = (Q2Ys - Q2Ys.min()) / (np.ptp(Q2Ys))
+
+    # Combined score
+    score = mse_norm - q2_norm
+
+    best_idx = np.argmin(score)
+    best_n_comp = list(test_comps)[best_idx]
+
+    print(f"Optimal number of components: {best_n_comp}")
+    print(f"CV-MSE: {cv_mse_scores[best_idx]:.4f}")
+    print(f"Q²Y: {Q2Ys[best_idx]:.4f}")
+
+    # Plot results
+    plt.figure(figsize=(8, 5))
+    plt.plot(test_comps, Q2Ys, marker='o', label="Q²Y")
+    plt.plot(test_comps, cv_mse_scores, marker='o', label="MSE")
+    plt.axvline(best_n_comp, linestyle="--", color="red", label="Selected")
+    plt.xlabel("Number of PLS Components")
+    plt.ylabel("Score")
+    plt.title("PLSR Model Selection")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    return {
+        "best_n_components": best_n_comp,
+        "cv_mse_scores": cv_mse_scores,
+        "q2_scores": Q2Ys,
+        "score": score
+    }
+
+#Results
+results = pls_components_selection_pipeline(X_train, Y_train)
+best_n_comp = results["best_n_components"]
+cv_mse_scores = results["cv_mse_scores"]
+Q2Ys = results["q2_scores"]
+
+def pca_biplot_pipeline(Y_matrix, X_final, drug_metadata, show_plot=True):
+    """
+    Full PCA biplot pipeline:
+    - PCA on drug response matrix
+    - PCA on target features
+    - Drug + target visualization (biplot)
+    - Returns objects for integration testing 
+    """
+
+    # PCA on drug response matrix
+    scaler = StandardScaler()
+    Yscaled = scaler.fit_transform(Y_matrix)
+
+    pca = PCA(n_components=10)
+    drug_scores = pca.fit_transform(Yscaled)
+
+    explained_variance = pca.explained_variance_ratio_
+    print(f"Explained variance ratio of first 3 PCs: {explained_variance[:3]}")
+
+    # Biplot
+
+    drug_df = drug_df = pd.DataFrame(
+        drug_scores,  
+        columns=[f"PC{i+1}" for i in range(drug_scores.shape[1])],
+        index=Y_matrix.index
+    )
+
+    # Drug metadata alignment
+    drug_metadata = drug_metadata.copy()
+    drug_metadata["column_name"] = drug_metadata["column_name"].astype(str).str.strip()
+
+    cat_map = drug_metadata.set_index("column_name")["drug_category"].to_dict()
+
+    drug_df["Category"] = [
+        cat_map.get(d, "Unknown") for d in drug_df.index
+    ]
+
+    colors = {
+        "targeted cancer": "#E23C4A",
+        "noncancer": "#748CAA",
+        "chemo": "#2ca02c"
+    }
+
+    # PCA on target features
+    X_scaled = StandardScaler().fit_transform(X_final)
+
+    pca_targets = PCA(n_components=10)
+    pca_targets.fit(X_scaled)
+
+    target_loadings = pd.DataFrame(
+        pca_targets.components_.T[:, :2],
+        index=X_final.columns,
+        columns=["PC1", "PC2"]
+    ).dropna()
+
+    target_loadings["magnitude"] = np.sqrt(
+        target_loadings["PC1"]**2 + target_loadings["PC2"]**2
+    )
+
+    top_targets = target_loadings.sort_values(
+        "magnitude", ascending=False
+    ).head(5)
+
+    # Plotting
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Scatter plot for drugs
+    for cat, group in drug_df.groupby("Category"):
+        ax.scatter(
+            group["PC1"],
+            group["PC2"],
+            label=cat,
+            color=colors.get(cat, "#7f7f7f"),
+            alpha=0.6,
+            s=20
+        )
+
+    texts = []
+    arrow_scale = 40
+
+    # Arrows for targets
+    for target in top_targets.index:
+        x = top_targets.loc[target, "PC1"] * arrow_scale
+        y = top_targets.loc[target, "PC2"] * arrow_scale
+
+        ax.annotate(
+            "",
+            xy=(x, y),
+            xytext=(0, 0),
+            arrowprops=dict(
+                arrowstyle="->",
+                color="black",
+                alpha=0.5,
+                shrinkA=0,
+                shrinkB=0
+            )
+        )
+
+        txt = ax.text(
+            x * 1.15,
+            y * 1.15,
+            target,
+            fontsize=9,
+            color="black",
+            bbox=dict(facecolor="white", alpha=0.6, edgecolor="none")
+        )
+
+        texts.append(txt)
+
+        ax.plot([x, x * 1.15], [y, y * 1.15],
+                linestyle="dotted", color="black", alpha=0.5)
+
+    adjust_text(
+        texts,
+        ax=ax,
+        only_move={'texts': 'xy'},
+        expand_text=(1.2, 1.4),
+        expand_points=(1.2, 1.4),
+        force_text=(0.5, 0.8),
+        force_points=(0.3, 0.5),
+    )
+
+    # Axes styling
+    ax.axhline(0, color="gray", lw=0.5)
+    ax.axvline(0, color="gray", lw=0.5)
+
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    ax.set_title("PCA Biplot: Drug Response + Target Structure")
+    ax.legend()
+
+    plt.tight_layout()
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    
+    # Return values
+    return {
+        "drug_df": drug_df,
+        "explained_variance": explained_variance,
+        "top_targets": top_targets,
+        "pca_drugs": pca,
+        "pca_targets": pca_targets,
+        "figure": fig
+    }
+
+#Results
+results = pca_biplot_pipeline(Y_matrix, X_final, drug_metadata)
+
+drug_df = results["drug_df"]
+explained_variance = results["explained_variance"]
+top_targets = results["top_targets"]
+
+# --- PCA Plots Using 5 PCs ---#
+def plot_multiple_pca_views(drug_df, components=[(1,2), (2,3), (3,4), (4,5), (1,3)]):
+    """
+    Full PCA pipeline:
+    - Graph 5 PCA plots with the selected components to see variation differences
+    """
+    # validate available PCs
+    available_pcs = [col for col in drug_df.columns if col.startswith("PC")]
+
+    filtered_components = []
+    for i, j in components:
+        pc_i, pc_j = f"PC{i}", f"PC{j}"
+
+        if pc_i in available_pcs and pc_j in available_pcs:
+            filtered_components.append((i, j))
+        else:
+            print(f"Warning: skipping {pc_i} vs {pc_j}")
+
+    if not filtered_components:
+        print("No valid PCA component pairs found.")
+        return
+
+    # Grid layout of 3x2
+    n_plots = len(filtered_components)
+    ncols = 2
+    nrows = (n_plots + ncols - 1) // ncols
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(6 * ncols, 4 * nrows)
+    )
+
+    axes = axes.flatten()
+
+    #Color map 
+    colors = {
+        "targeted cancer": "#E23C4A",
+        "noncancer": "#748CAA",
+        "chemo": "#2ca02c",
+        "Unknown": "#999999"
+    }
+
+    #Plotting
+    for ax, (i, j) in zip(axes, filtered_components):
+
+        for cat, group in drug_df.groupby("Category"):
+            ax.scatter(
+                group[f"PC{i}"],
+                group[f"PC{j}"],
+                label=cat,
+                color=colors.get(cat, "#7f7f7f"),
+                s=15,
+                alpha=0.6
+            )
+
+        ax.set_title(f"PC{i} vs PC{j}")
+        ax.set_xlabel(f"PC{i}")
+        ax.set_ylabel(f"PC{j}")
+
+        ax.axhline(0, color="gray", lw=0.5)
+        ax.axvline(0, color="gray", lw=0.5)
+
+    #Hide unused axes
+    for k in range(len(filtered_components), len(axes)):
+        axes[k].axis("off")
+
+    #Legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper right")
+
+    plt.tight_layout()
+    plt.show()
+
+#Results
+plot_multiple_pca_views(drug_df)
+
+# --- PLSR Evaluation ---#
+def plsr_evaluation_pipeline(X_train, Y_train, X_test, Y_test, best_n_comp):
+    """
+    Full PLSR Evaluation pipeline:
+    - 
+    """ 
+
+    # PLSR model
+    plsr = PLSRegression(n_components=best_n_comp)
+
+    # Fit
+    plsr.fit(X_train, Y_train)
+
+    # Predict
+    Y_pred = plsr.predict(X_test)
+
+    # Flatten for global metrics
+    y_true = Y_test.flatten()
+    y_pred = Y_pred.flatten()
+
+    # Performance error metrics
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y_true, y_pred)
+
+    # Correlation metrics
+    pearson_corr, _ = pearsonr(y_true, y_pred)
+    spearman_corr, _ = spearmanr(y_true, y_pred)
+
+    #Print results
+    print(f"RMSE: {rmse:.4f}")
+    print(f"MAE: {mae:.4f}")
+    print(f"Pearson correlation: {pearson_corr:.4f}")
+    print(f"Spearman correlation: {spearman_corr:.4f}")
+
+    return {
+        "model": plsr,
+        "Y_pred": Y_pred,
+        "y_true": y_true,
+        "y_pred": y_pred,
+        "rmse": rmse,
+        "mae": mae,
+        "pearson": pearson_corr,
+        "spearman": spearman_corr
+    }
+
+#Results
+results = plsr_evaluation_pipeline(
+    X_train,
+    Y_train,
+    X_test,
+    Y_test,
+    best_n_comp
+)
+plsr = results["model"]
+Y_pred = results["Y_pred"]
+
+# --- Drug Ranking Profile --#
+def auc_drug_ranking_pipeline(
+    Y_pred,
+    drug_metadata_filtered,
+    common_indices,
+    is_noncancer
+):
+    """
+    Full Drug Ranking pipeline:
+    - 
+    """ 
+
+    # AUC-like killing score
+    auc_score = np.mean(Y_pred < -0.5, axis=1)
+
+    # Align metadata
+    noncancer_drug_names = drug_metadata_filtered.loc[common_indices][is_noncancer]['name'].values
+    targets = drug_metadata_filtered.loc[common_indices][is_noncancer]['target'].values
+
+    # Build results table
+    results_df = pd.DataFrame({
+        'Drug_Name': noncancer_drug_names,
+        'AUC_Killing_Score': auc_score,
+        'Target': targets
+    }).sort_values(by='AUC_Killing_Score', ascending=False)
+
+    # Print Top 10 list
+    print("\nTop 10 noncancer drugs predicted to have the strongest anti-cancer profiles:")
+    print(results_df.head(10))
+
+    print("\nTop 10 noncancer drugs predicted to have the weakest anti-cancer profiles:")
+    print(results_df.tail(10))
+
+    #Print Strong hits
+    strong_hits = results_df[results_df["AUC_Killing_Score"] >= 0.7]
+
+    print(f"\nNumber of strong hits: {len(strong_hits)}")
+    print(strong_hits[["Drug_Name", "AUC_Killing_Score", "Target"]])
+
+    return {
+        "auc_score": auc_score,
+        "results_df": results_df,
+        "strong_hits": strong_hits
+    }
+
+#Results 
+auc_results = auc_drug_ranking_pipeline(
+    Y_pred,
+    drug_metadata_filtered,
+    common_indices,
+    is_noncancer
+)
+
+results_df = auc_results["results_df"]
+strong_hits = auc_results["strong_hits"]
+
+# --- PLSR Scores Plot ---#
+def plsr_scores_plot_pipeline(
+    results_df,
+    plsr,
+    X_test,
+    adjust_text
+):
+    """
+    Full PLSR Scores Plot pipeline:
+    - 
+    """
+
+    # Define strong drugs
+    strong_mask = results_df["AUC_Killing_Score"] >= 0.7
+    strong_drugs = results_df[strong_mask]
+
+    anticancer_idx = strong_drugs.index
+    background_idx = results_df.index.difference(anticancer_idx)
+
+    # Latent space projection
+    X_test_scores = plsr.transform(X_test)
+
+    # safe index mapping
+    index_list = list(results_df.index)
+
+    anticancer_pos = [index_list.index(i) for i in anticancer_idx]
+    background_pos = [index_list.index(i) for i in background_idx]
+
+    X_scores_anticancer = X_test_scores[anticancer_pos]
+    X_scores_bg = X_test_scores[background_pos]
+
+    # Plot Setup
+    plt.figure(figsize=(6, 5))
+
+    # Background drugs
+    plt.scatter(
+        X_scores_bg[:, 0],
+        X_scores_bg[:, 1],
+        color="lightgray",
+        s=15,
+        alpha=0.6,
+        label="Other noncancer drugs"
+    )
+
+    # Strong anticancer drugs
+    plt.scatter(
+        X_scores_anticancer[:, 0],
+        X_scores_anticancer[:, 1],
+        color="#E23C4A",
+        s=40,
+        alpha=0.9,
+        edgecolor="k",
+        label="Predicted anticancer drugs"
+    )
+
+    # Label top candidates
+    top_n = min(20, len(strong_drugs))
+    top_hits = strong_drugs.sort_values(
+        "AUC_Killing_Score",
+        ascending=False
+    ).head(top_n)
+
+    texts = []
+
+    for drug in top_hits.index:
+        pos = anticancer_idx.get_loc(drug)
+
+        texts.append(
+            plt.text(
+                X_scores_anticancer[pos, 0],
+                X_scores_anticancer[pos, 1],
+                drug,
+                fontsize=8
+            )
+        )
+
+    adjust_text(
+        texts,
+        arrowprops=dict(arrowstyle='-', color='gray', lw=0.5),
+        expand_text=(1.2, 1.4),
+        expand_points=(1.2, 1.4),
+        force_text=(0.3, 0.5),
+        force_points=(0.2, 0.3)
+    )
+
+    plt.title(
+        "Scores Plot of Noncancer Drugs with \nStrong Anti-Cancer Potential vs Weak Anti-Cancer Potential",
+        fontsize=15,
+        fontweight="bold"
+    )
+
+    plt.xlabel("PLSR Component 1")
+    plt.ylabel("PLSR Component 2")
+
+    plt.axhline(0, color="gray", lw=0.5)
+    plt.axvline(0, color="gray", lw=0.5)
+
+    plt.legend()
+    plt.grid(True, linestyle=":", alpha=0.5)
+    plt.tight_layout()
+    plt.show()
+
+    # Output table
+    anticancer_df = pd.DataFrame({
+        "Drug": strong_drugs.index,
+        "Target": strong_drugs["Target"].values,
+        "AUC_Killing_Score": strong_drugs["AUC_Killing_Score"].values,
+        "PLS1": X_scores_anticancer[:, 0],
+        "PLS2": X_scores_anticancer[:, 1]
+    })
+
+    print(
+        anticancer_df.sort_values(
+            "AUC_Killing_Score",
+            ascending=False
+        )
+    )
+
+    return {
+        "strong_drugs": strong_drugs,
+        "anticancer_df": anticancer_df,
+        "X_scores_anticancer": X_scores_anticancer,
+        "X_scores_bg": X_scores_bg
+    }
+
+#Results
+scores_results = plsr_scores_plot_pipeline(
+    results_df,
+    plsr,
+    X_test,
+    adjust_text
+)
+strong_drugs = scores_results["strong_drugs"]
+anticancer_df = scores_results["anticancer_df"]
+
+# --- PLSR Loadings Plot on Oncology Target Features ---#
+def plsr_loadings_plot_pipeline(plsr, X_final):
+    """
+    Full PLSR Loadings Plot on Oncology Target Features pipeline:
+    - 
+    """
+
+    # Loadings plot on drug target features from trained PLSR model
+    X_loadings = plsr.x_loadings_
+    feature_names = X_final.columns.values
+
+    loading_magnitudes = np.sqrt(
+        X_loadings[:, 0] ** 2 + X_loadings[:, 1] ** 2
+    )
+
+    top_loading_indices = np.argsort(loading_magnitudes)[-10:]  # Top 10
+
+    # Plot all features (background)
+    plt.scatter(
+        X_loadings[:, 0],
+        X_loadings[:, 1],
+        color="lightgray",
+        alpha=0.5
+    )
+
+    # Highlight + label top features
+    for idx in top_loading_indices:
+        plt.scatter(
+            X_loadings[idx, 0],
+            X_loadings[idx, 1],
+            color="darkblue",
+            s=35,
+            edgecolors="k"
+        )
+
+        clean_label = feature_names[idx].replace("target_", "")
+
+        plt.annotate(
+            clean_label,
+            (X_loadings[idx, 0], X_loadings[idx, 1]),
+            textcoords="offset points",
+            xytext=(5, 6),
+            ha="right",
+            fontsize=7,
+            fontweight="semibold"
+        )
+
+    plt.title(
+        "Loadings Plot of Oncology Target Features",
+        fontsize=14,
+        fontweight="bold"
+    )
+
+    plt.xlabel("PLSR Component 1", fontsize=12)
+    plt.ylabel("PLSR Component 2", fontsize=12)
+
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.show()
+
+    # Return values
+    return {
+        "X_loadings": X_loadings,
+        "feature_names": feature_names,
+        "top_loading_indices": top_loading_indices,
+        "loading_magnitudes": loading_magnitudes
+    }
+#Results
+loadings_results = plsr_loadings_plot_pipeline(plsr, X_final)
+
+X_loadings = loadings_results["X_loadings"]
+feature_names = loadings_results["feature_names"]
+loading_magnitudes = loadings_results["loading_magnitudes"]
+top_loading_indices = loadings_results["top_loading_indices"]
+
+# -- PLSR Loadings Plot on Predicted Anti-Cancer Drug Target Features--#
+def anticancer_target_loadings_pipeline(
+    strong_drugs,
+    X_loadings,
+    feature_names
+):
+    """
+    Full PLSR Loadings Plot on Predicted Anti-Cancer Drug Target Features pipeline:
+    - 
+    """
+
+    anticancer_targets = strong_drugs["Target"].values
+    unique_anticancer_targets = np.unique(anticancer_targets)
+    encoded_targets = np.array([f"target_{t}" for t in unique_anticancer_targets])
+
+    # Map feature names to indices once
+    feature_index_map = {name: i for i, name in enumerate(feature_names)}
+
+    # Find valid indices
+    valid_indices = [
+        feature_index_map[t] for t in encoded_targets if t in feature_index_map
+    ]
+
+    valid_indices = np.array(valid_indices)
+
+    # Plot Loadings
+    plt.figure(figsize=(7, 6))
+
+    plt.scatter(
+        X_loadings[:, 0],
+        X_loadings[:, 1],
+        color="lightgray",
+        alpha=0.5,
+        label="All targets"
+    )
+
+    # Highlight anticancer targets
+    plt.scatter(
+        X_loadings[valid_indices, 0],
+        X_loadings[valid_indices, 1],
+        color="#E23C4A",
+        s=50,
+        edgecolors="black",
+        label="Targets in anticancer-predicted drugs",
+        zorder=3
+    )
+
+    # Create labels
+    for idx in valid_indices:
+        clean_label = feature_names[idx].replace("target_", "")
+
+        plt.annotate(
+            clean_label,
+            (X_loadings[idx, 0], X_loadings[idx, 1]),
+            textcoords="offset points",
+            xytext=(8, 5),
+            ha="left",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.6, ec="none")
+        )
+
+    plt.title(
+        "Loadings Plot of Targets of Predicted Anticancer Drugs",
+        fontsize=16,
+        fontweight="bold"
+    )
+
+    plt.xlabel("PLS Component 1 Loading")
+    plt.ylabel("PLS Component 2 Loading")
+
+    plt.axhline(0, color="black", linewidth=0.5)
+    plt.axvline(0, color="black", linewidth=0.5)
+
+    plt.legend()
+    plt.grid(True, linestyle=":", alpha=0.4)
+
+    plt.tight_layout()
+    plt.show()
+
+    #Return values
+    return {
+        "valid_indices": valid_indices,
+        "encoded_targets": encoded_targets,
+        "anticancer_targets": anticancer_targets,
+        "unique_anticancer_targets": unique_anticancer_targets,
+        "feature_index_map": feature_index_map
+    }
+
+#Results
+anticancer_loadings_results = anticancer_target_loadings_pipeline(
+    strong_drugs,
+    X_loadings,
+    feature_names
+)
+
+anticancer_targets = anticancer_loadings_results["anticancer_targets"]
+valid_indices = anticancer_loadings_results["valid_indices"]
+
+# -- Target Overlap --#
+def target_overlap_pipeline(
+    feature_names,
+    top_loading_indices,
+    anticancer_targets
+):
+    """
+    Full Target Overlap pipeline:
+    - 
+    """ 
+
+    blue_targets = set(feature_names[top_loading_indices])
+    red_targets = set(anticancer_targets)
+
+    overlap = red_targets.intersection(blue_targets)
+    union = red_targets.union(blue_targets)
+
+    print("Red targets:", len(red_targets))
+    print("Blue targets:", len(blue_targets))
+    print("Overlap:", len(overlap))
+    print("Overlapping targets:", overlap)
+
+    jaccard = len(overlap) / len(union)
+    print("Jaccard similarity:", jaccard)
+
+    return {
+        "red_targets": red_targets,
+        "blue_targets": blue_targets,
+        "overlap": overlap,
+        "union": union,
+        "jaccard": jaccard
+    }
+
+#Results
+overlap_results = target_overlap_pipeline(
+    feature_names,
+    top_loading_indices,
+    anticancer_targets
+)
+
+jaccard = overlap_results["jaccard"]
+
+# --- Random Forest ---#
+def random_forest_pipeline(X_train, Y_train, X_test, Y_test):
+    """
+    Full Random Forest pipeline:
+    - 
+    """ 
+    rf = RandomForestRegressor(
+        n_estimators=300,
+        random_state=42,
+        max_depth=None
+    )
+
+    # Train model
+    rf.fit(X_train, Y_train)
+    Y_pred_rf = rf.predict(X_test)
+
+    mse = mean_squared_error(Y_test, Y_pred_rf)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(Y_test, Y_pred_rf)
+
+    y_true_flat = Y_test.ravel()
+    y_pred_flat = Y_pred_rf.ravel()
+
+    pearson = pearsonr(y_true_flat, y_pred_flat)[0]
+    spearman = spearmanr(y_true_flat, y_pred_flat)[0]
+
+    print("Random Forest Results")
+    print("----------------------")
+    print(f"RMSE: {rmse:.4f}")
+    print(f"MAE: {mae:.4f}")
+    print(f"Pearson: {pearson:.4f}")
+    print(f"Spearman: {spearman:.4f}")
+
+    return {
+        "model": rf,
+        "Y_pred_rf": Y_pred_rf,
+        "rmse": rmse,
+        "mae": mae,
+        "pearson": pearson,
+        "spearman": spearman
+    }
+
+#Results
+rf_results = random_forest_pipeline(X_train, Y_train, X_test, Y_test)
+
+Y_pred_rf = rf_results["Y_pred_rf"]
+rf = rf_results["model"]
+
+# -- Random Forest Importance Pipeline --#
+def random_forest_importance_pipeline(rf, feature_names):
+    """
+    Full Random Forest Importance pipeline:
+    - 
+    """ 
+
+    importances = rf.feature_importances_
+
+    importance_df = pd.DataFrame({
+        "Feature": feature_names,
+        "Importance": importances
+    }).sort_values(by="Importance", ascending=False)
+
+    print(importance_df.head(20))
+
+    top_n = 10
+    top_features = importance_df.head(top_n)
+
+    plt.figure(figsize=(8,6))
+    plt.barh(top_features["Feature"][::-1], top_features["Importance"][::-1])
+    plt.title("Top Random Forest Feature Importances")
+    plt.xlabel("Importance")
+    plt.tight_layout()
+    plt.show()
+
+    return {
+        "importance_df": importance_df,
+        "top_features": top_features,
+        "importances": importances
+    }
+
+#Results
+importance_results = random_forest_importance_pipeline(rf, feature_names)
+
+importance_df = importance_results["importance_df"]
+
+# --- Random Forest Overap with PLSR ---#
+def plsr_rf_overlap_pipeline(feature_names, loading_magnitudes, importance_df):
+    """
+    Full Random Forest Overlap pipeline:
+    - 
+    """ 
+
+    # Top 10 PLSR targets
+    plsr_top = feature_names[np.argsort(loading_magnitudes)[-10:]]
+
+    # Top 10 RF targets
+    rf_top = importance_df.head(10)["Feature"].values
+
+    # Overlap
+    overlap = set(plsr_top).intersection(set(rf_top))
+
+    overlap_df = pd.DataFrame(
+        {"Shared_Targets": sorted(overlap)}
+    )
+
+    print(overlap_df)
+
+    return {
+        "plsr_top": plsr_top,
+        "rf_top": rf_top,
+        "overlap": overlap,
+        "overlap_df": overlap_df
+    }
+
+#Results
+overlap_results = plsr_rf_overlap_pipeline(
+    feature_names,
+    loading_magnitudes,
+    importance_df)
+
+overlap_df = overlap_results["overlap_df"]
