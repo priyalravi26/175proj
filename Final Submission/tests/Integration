@@ -1,0 +1,100 @@
+import pandas as pd
+import numpy as np
+import os
+import sys
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))  
+SRC_DIR = os.path.join(BASE_DIR, "src")
+
+sys.path.insert(0, SRC_DIR)
+
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.model_selection import LeaveOneGroupOut, cross_val_predict, KFold
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+from scipy.stats import pearsonr, spearmanr
+from adjustText import adjust_text
+from sklearn.ensemble import RandomForestRegressor
+from preprocessing import load_and_prepare_data
+from pca_analysis import pca_biplot_pipeline, plot_multiple_pca_views
+from plsr_analysis import pls_components_selection_pipeline, plsr_evaluation_pipeline, plsr_scores_plot_pipeline, plsr_loadings_plot_pipeline, anticancer_target_loadings_pipeline, target_overlap_pipeline
+from drug_ranking import auc_drug_ranking_pipeline
+from random_forest import random_forest_pipeline, random_forest_importance_pipeline, plsr_rf_overlap_pipeline
+
+def test_full_ml_pipeline():
+
+    # -----------------------------
+    # 1. Load data
+    # -----------------------------
+    data = load_and_prepare_data(
+        os.path.join(DATA_DIR, "primary-screen-replicate-collapsed-logfold-change.csv"),
+        os.path.join(DATA_DIR, "biomarkers.csv")
+    )
+    # -----------------------------
+    # 2. PCA pipeline
+    # -----------------------------
+    pca_results = pca_biplot_pipeline(
+        data["Y_matrix"],
+        data["X_final"],
+        data["metadata"]
+    )
+
+    drug_df = pca_results["drug_df"]
+
+    # -----------------------------
+    # 3. Random Forest pipeline
+    # -----------------------------
+    rf_results = random_forest_pipeline(
+        data["X_train"],
+        data["Y_train"],
+        data["X_test"],
+        data["Y_test"]
+    )
+
+    rf_model = rf_results["model"]
+
+    # -----------------------------
+    # 4. Feature importance
+    # -----------------------------
+    importance_results = random_forest_importance_pipeline(
+        rf_model,
+        data["X_final"].columns
+    )
+
+    # -----------------------------
+    # 5. Overlap analysis
+    # -----------------------------
+    overlap_results = plsr_rf_overlap_pipeline(
+        data["X_final"].columns,
+        importance_results["importances"],
+        importance_results["importance_df"]
+    )
+
+    # -----------------------------
+    # 6. Basic assertions (core tests)
+    # -----------------------------
+
+    # Data sanity
+    assert data["X_train"].shape[0] > 0
+    assert data["Y_train"].shape[0] > 0
+
+    # PCA sanity
+    assert "PC1" in drug_df.columns
+    assert "PC2" in drug_df.columns
+    assert drug_df.shape[0] > 0
+
+    # RF sanity
+    assert rf_results["rmse"] >= 0
+    assert rf_results["mae"] >= 0
+    assert -1 <= rf_results["pearson"] <= 1
+
+    # Feature importance sanity
+    assert len(importance_results["importances"]) == len(data["X_final"].columns)
+
+    print("✔ FULL INTEGRATION PIPELINE TEST PASSED")
+
+if __name__ == "__main__":
+    test_full_ml_pipeline()

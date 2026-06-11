@@ -1,0 +1,8 @@
+Shared_Targets
+target_BCL2
+"target_CHEK1, CHEK2"
+"target_HDAC1, HDAC10, HDAC3, HDAC4, HDAC5, HDAC9"
+"target_HDAC1, HDAC2, HDAC3, HDAC6"
+target_HSP90AA1
+target_KIF11
+target_PLK1
