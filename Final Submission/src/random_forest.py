@@ -13,11 +13,52 @@ from sklearn.ensemble import RandomForestRegressor
 
 
 # --- Random Forest ---#
+"""
+Random Forest Regression Pipeline
+
+Trains and evaluates a Random Forest regressor for predicting continuous biological or drug response outcomes.
+
+Steps:
+- Fits a Random Forest model on training data
+- Generates predictions on test data
+- Computes regression performance metrics:
+  - RMSE (Root Mean Squared Error)
+  - MAE (Mean Absolute Error)
+- Computes correlation-based metrics:
+  - Pearson correlation (linear agreement)
+  - Spearman correlation (rank-based agreement)
+
+This provides a nonlinear baseline comparison against PLSR models.
+
+Parameters
+----------
+X_train : array-like
+    Training feature matrix.
+
+Y_train : array-like
+    Training target matrix.
+
+X_test : array-like
+    Test feature matrix.
+
+Y_test : array-like
+    Test target matrix.
+
+save_dir : str or None
+    Directory to save evaluation metrics CSV. If None, results are not saved.
+
+Returns
+-------
+dict
+    Contains:
+    - model : trained RandomForestRegressor
+    - Y_pred_rf : model predictions
+    - rmse : float
+    - mae : float
+    - pearson : float
+    - spearman : float
+"""
 def random_forest_pipeline(X_train, Y_train, X_test, Y_test, save_dir=None):
-    """
-    Full Random Forest pipeline:
-    - 
-    """ 
     rf = RandomForestRegressor(
         n_estimators=300,
         random_state=42,
@@ -28,14 +69,14 @@ def random_forest_pipeline(X_train, Y_train, X_test, Y_test, save_dir=None):
     rf.fit(X_train, Y_train)
     Y_pred_rf = rf.predict(X_test)
 
-    mse = mean_squared_error(Y_test, Y_pred_rf)
+    mse = mean_squared_error(Y_test, Y_pred_rf) #standard regression error metrics
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(Y_test, Y_pred_rf)
 
-    y_true_flat = Y_test.ravel()
+    y_true_flat = Y_test.ravel() #flatten arrays to compute global correlation across all outputs
     y_pred_flat = Y_pred_rf.ravel()
 
-    pearson = pearsonr(y_true_flat, y_pred_flat)[0]
+    pearson = pearsonr(y_true_flat, y_pred_flat)[0]     # Pearson: linear agreement, Spearman: rank consistency
     spearman = spearmanr(y_true_flat, y_pred_flat)[0]
 
     if save_dir:
@@ -57,18 +98,46 @@ def random_forest_pipeline(X_train, Y_train, X_test, Y_test, save_dir=None):
 
 
 # -- Random Forest Importance Pipeline --#
-def random_forest_importance_pipeline(rf, feature_names, save_dir=None):
-    """
-    Full Random Forest Importance pipeline:
-    - 
-    """ 
+"""
+Random Forest Feature Importance Pipeline
 
-    importances = rf.feature_importances_
+Extracts and visualizes feature importance scores from a trained Random Forest model.
+
+Steps:
+- Extracts feature importance values from trained model
+- Constructs ranked feature importance table
+- Displays top contributing features
+- Plots top N features for interpretability
+
+This identifies nonlinear feature contributions to model predictions.
+
+Parameters
+----------
+rf : RandomForestRegressor
+    Trained Random Forest model.
+
+feature_names : array-like
+    Names of input features corresponding to model inputs.
+
+save_dir : str or None
+    Directory to save feature importance plot. If None, plot is shown.
+
+Returns
+-------
+dict
+    Contains:
+    - importance_df : full ranked importance table
+    - top_features : top 10 features
+    - importances : raw importance array
+"""
+def random_forest_importance_pipeline(rf, feature_names, save_dir=None):
+
+    importances = rf.feature_importances_     # Extract built-in feature importance from trained RF model
 
     importance_df = pd.DataFrame({
         "Feature": feature_names,
         "Importance": importances
-    }).sort_values(by="Importance", ascending=False)
+    }).sort_values(by="Importance", ascending=False)     # Pair each feature with its importance score and sort descending
 
     print(importance_df.head(20))
 
@@ -94,12 +163,47 @@ def random_forest_importance_pipeline(rf, feature_names, save_dir=None):
 
 
 # --- Random Forest Overap with PLSR ---#
-def plsr_rf_overlap_pipeline(feature_names, loading_magnitudes, importance_df, save_dir=None):
-    """
-    Full Random Forest Overlap pipeline:
-    - 
-    """ 
+"""
+PLSR vs Random Forest Feature Overlap Pipeline
 
+Compares top-ranked features identified by:
+- PLSR loading magnitudes (linear latent structure)
+- Random Forest feature importances (nonlinear predictive importance)
+
+This provides insight into agreement between linear and nonlinear models
+in identifying biologically relevant targets.
+
+Steps:
+- Extracts top features from PLSR loadings
+- Extracts top features from Random Forest importances
+- Computes intersection (shared predictive features)
+- Saves ranked feature lists and overlap results
+
+Parameters
+----------
+feature_names : array-like
+    Feature names corresponding to model inputs.
+
+loading_magnitudes : array-like
+    Feature importance scores derived from PLSR loadings.
+
+importance_df : DataFrame
+    Ranked feature importance output from Random Forest pipeline.
+
+save_dir : str or None
+    Directory to save overlap results. If None, outputs are not saved.
+
+Returns
+-------
+dict
+    Contains:
+    - plsr_top : top PLSR features
+    - rf_top : top Random Forest features
+    - overlap : set of shared features
+    - overlap_df : DataFrame of shared targets
+"""
+def plsr_rf_overlap_pipeline(feature_names, loading_magnitudes, importance_df, save_dir=None):
+    
     # Top 10 PLSR targets
     plsr_top = feature_names[np.argsort(loading_magnitudes)[-10:]]
 

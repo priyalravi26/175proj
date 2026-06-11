@@ -11,11 +11,42 @@ from scipy.stats import pearsonr, spearmanr
 from adjustText import adjust_text
 from sklearn.ensemble import RandomForestRegressor
 #--- Components Selection for PLSR ---#
+"""
+PLSR Components Selection Pipeline
+
+Performs cross-validated model selection for Partial Least Squares Regression (PLSR)
+by evaluating model performance across a range of latent components.
+
+For each candidate number of components, the pipeline:
+- Fits a PLSRegression model using K-fold cross-validation
+- Computes CV Mean Squared Error (MSE)
+- Computes Q² (predictive power metric based on PRESS vs TSS)
+- Normalizes and combines metrics to select optimal complexity
+
+The optimal number of components is chosen by minimizing a combined score
+that balances prediction error and explained variance.
+
+Parameters
+----------
+X_train : array-like or DataFrame
+    Training feature matrix.
+
+Y_train : array-like or DataFrame
+    Training response matrix.
+
+save_dir : str or None
+    Directory to save the components selection plot. If None, plot is displayed.
+
+Returns
+-------
+dict
+    Contains:
+    - best_n_components : int
+    - cv_mse_scores : array
+    - q2_scores : array
+    - score : array (combined selection criterion)
+"""
 def pls_components_selection_pipeline(X_train, Y_train, save_dir=None):
-    """
-    Full Components Section pipeline:
-    - 
-    """   
     
     test_comps = range(1, 15)
     cv = KFold(n_splits=10, shuffle=True, random_state=42)
@@ -87,13 +118,48 @@ def pls_components_selection_pipeline(X_train, Y_train, save_dir=None):
         "q2_scores": Q2Ys,
         "score": score
     }
-
 # --- PLSR Evaluation ---#
+"""
+PLSR Evaluation Pipeline
+
+Trains a PLSRegression model using the selected number of components
+and evaluates its predictive performance on held-out test data.
+
+Computes:
+- Root Mean Squared Error (RMSE)
+- Mean Absolute Error (MAE)
+- Pearson correlation (linear association)
+- Spearman correlation (rank-based association)
+
+This provides both regression error metrics and biological agreement measures.
+
+Parameters
+----------
+X_train : array-like
+    Training features.
+
+Y_train : array-like
+    Training targets.
+
+X_test : array-like
+    Test features.
+
+Y_test : array-like
+    Test targets.
+
+best_n_comp : int
+    Number of PLS components selected from model selection step.
+
+save_dir : str or None
+    Directory to save evaluation metrics CSV.
+
+Returns
+-------
+dict
+    Contains trained model, predictions, flattened arrays,
+    and performance metrics (RMSE, MAE, Pearson, Spearman).
+"""
 def plsr_evaluation_pipeline(X_train, Y_train, X_test, Y_test, best_n_comp, save_dir=None):
-    """
-    Full PLSR Evaluation pipeline:
-    - 
-    """ 
 
     # PLSR model
     plsr = PLSRegression(n_components=best_n_comp)
@@ -135,8 +201,47 @@ def plsr_evaluation_pipeline(X_train, Y_train, X_test, Y_test, best_n_comp, save
         "pearson": pearson_corr,
         "spearman": spearman_corr
     }
-
 # --- PLSR Scores Plot ---#
+"""
+PLSR Scores Plot Pipeline
+
+Visualizes the latent space of samples in PLSR component space,
+highlighting separation between predicted anticancer drugs and background compounds.
+
+Key steps:
+- Projects test data into PLSR latent space
+- Separates high-confidence anticancer drugs based on AUC_Killing_Score threshold
+- Plots score distribution in first two PLS components
+- Annotates top-ranked anticancer candidates
+
+This visualization helps interpret clustering and separation in model-derived space.
+
+Parameters
+----------
+results_df : DataFrame
+    Contains drug-level metadata including AUC_Killing_Score and targets.
+
+plsr : trained PLSRegression model
+    Fitted model used for transformation.
+
+X_test : array-like
+    Test feature matrix.
+
+adjust_text : function
+    Annotation adjustment function for label overlap reduction.
+
+save_dir : str or None
+    Directory to save plot. If None, plot is shown.
+
+Returns
+-------
+dict
+    Contains:
+    - strong_drugs : DataFrame of high-confidence candidates
+    - anticancer_df : annotated projection table
+    - X_scores_anticancer : projected anticancer drug scores
+    - X_scores_bg : projected background scores
+"""
 def plsr_scores_plot_pipeline(
     results_df,
     plsr,
@@ -144,10 +249,6 @@ def plsr_scores_plot_pipeline(
     adjust_text,
     save_dir=None
 ):
-    """
-    Full PLSR Scores Plot pipeline:
-    - 
-    """
 
     # Define strong drugs
     strong_mask = results_df["AUC_Killing_Score"] >= 0.7
@@ -265,13 +366,42 @@ def plsr_scores_plot_pipeline(
         "X_scores_anticancer": X_scores_anticancer,
         "X_scores_bg": X_scores_bg
     }
-
 # --- PLSR Loadings Plot on Oncology Target Features ---#
+"""
+PLSR Loadings Plot Pipeline
+
+Visualizes feature loadings from a trained PLSR model in the first two components,
+highlighting the most influential features based on loading magnitude.
+
+Steps:
+- Extracts X-loadings from trained model
+- Computes feature importance using Euclidean magnitude across first two components
+- Identifies top contributing features
+- Plots full feature space and highlights top features
+
+This helps interpret which biological targets drive latent structure.
+
+Parameters
+----------
+plsr : trained PLSRegression model
+    Fitted model containing x_loadings_.
+
+X_final : DataFrame
+    Feature matrix used for training (provides feature names).
+
+save_dir : str or None
+    Directory to save plot. If None, plot is shown.
+
+Returns
+-------
+dict
+    Contains:
+    - X_loadings : array
+    - feature_names : array
+    - top_loading_indices : array
+    - loading_magnitudes : array
+"""
 def plsr_loadings_plot_pipeline(plsr, X_final, save_dir=None):
-    """
-    Full PLSR Loadings Plot on Oncology Target Features pipeline:
-    -
-    """
 
     # Extract loadings and feature names
     X_loadings = plsr.x_loadings_
@@ -354,16 +484,51 @@ def plsr_loadings_plot_pipeline(plsr, X_final, save_dir=None):
     }
 
 # -- PLSR Loadings Plot on Predicted Anti-Cancer Drug Target Features--#
+"""
+Anticancer Target Loadings Pipeline
+
+Maps predicted anticancer drug targets onto PLSR loading space
+to identify which biological features are enriched among high-confidence drugs.
+
+Steps:
+- Extracts unique targets from predicted anticancer drugs
+- Maps targets to feature indices in loading matrix
+- Visualizes selected targets within global loading structure
+- Annotates biologically relevant features
+
+This connects model predictions back to biological target space.
+
+Parameters
+----------
+strong_drugs : DataFrame
+    Subset of predicted high-confidence anticancer drugs.
+
+X_loadings : array-like
+    PLSR feature loading matrix.
+
+feature_names : array-like
+    Feature names corresponding to loading rows.
+
+save_dir : str or None
+    Directory to save plot. If None, plot is shown.
+
+Returns
+-------
+dict
+    Contains:
+    - valid_indices : indices of mapped targets
+    - encoded_targets : formatted target names
+    - anticancer_targets : raw extracted targets
+    - unique_anticancer_targets : deduplicated targets
+    - feature_index_map : mapping of feature name → index
+"""
+
 def anticancer_target_loadings_pipeline(
     strong_drugs,
     X_loadings,
     feature_names,
     save_dir=None
 ):
-    """
-    Full PLSR Loadings Plot on Predicted Anti-Cancer Drug Target Features pipeline:
-    - 
-    """
 
     anticancer_targets = strong_drugs["Target"].values
     unique_anticancer_targets = np.unique(anticancer_targets)
@@ -449,22 +614,53 @@ def anticancer_target_loadings_pipeline(
 
 
 # -- Target Overlap --#
+"""
+Target Overlap Pipeline
+
+Compares overlap between:
+- Blue targets: top features identified from model loadings (e.g., PCA/PLS components)
+- Red targets: known anticancer target set
+
+Computes:
+- Set overlap and union between both target groups
+- Jaccard similarity index as a measure of agreement between sets
+
+Parameters
+----------
+feature_names : array-like
+    List/array of all feature names corresponding to model inputs.
+
+top_loading_indices : array-like
+    Indices of top features selected from model loadings (e.g., highest absolute weights).
+
+anticancer_targets : list or set
+    Ground-truth or literature-derived anticancer target genes/features.
+
+save_dir : str or None
+    Directory to save overlap summary CSV. If None, results are not saved.
+
+Returns
+-------
+dict
+    Dictionary containing:
+    - red_targets (set)
+    - blue_targets (set)
+    - overlap (set intersection)
+    - union (set union)
+    - jaccard (float similarity score)
+"""
 def target_overlap_pipeline(
     feature_names,
     top_loading_indices,
     anticancer_targets,
     save_dir=None
 ):
-    """
-    Full Target Overlap pipeline:
-    - 
-    """ 
 
     blue_targets = set(feature_names[top_loading_indices])
     red_targets = set(anticancer_targets)
 
-    overlap = red_targets.intersection(blue_targets)
-    union = red_targets.union(blue_targets)
+    overlap = red_targets.intersection(blue_targets) # Identify shared targets between model and known biology
+    union = red_targets.union(blue_targets) # Total unique targets across both sets (used for Jaccard denominator)
 
     print("Red targets:", len(red_targets))
     print("Blue targets:", len(blue_targets))

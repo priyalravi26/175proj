@@ -1,0 +1,5 @@
+Contributions:
+Jeannie: Initial model training, performance metrics, final PLSR analysis, and revieweing report.
+Jeremy: Limitations section of the report, methods section of the presentation, and preliminary research and exploratory analysis.
+Winnie: PCA biplot, PCA scores plots with varying principal components, random forest model, additional performance metrics, integration testing, and methods and results sections of the report and presentation.
+Priya: Preliminary PCA analysis, introduction and methods sections of the report and presentation, and final codebase organization and documentation.

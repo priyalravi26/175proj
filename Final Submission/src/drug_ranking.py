@@ -13,6 +13,49 @@ from sklearn.ensemble import RandomForestRegressor
 
 
 # --- Drug Ranking Profile --#
+"""
+Drug Ranking Pipeline (AUC-based scoring)
+
+Ranks noncancer drugs by predicted anti-cancer effectiveness using an
+AUC-like killing score derived from model predictions.
+
+This pipeline identifies compounds with strong predicted cytotoxic profiles
+and summarizes them by target annotation.
+
+Steps:
+- Computes AUC-like score from prediction thresholding
+- Aligns predictions with drug metadata
+- Constructs ranked drug table with targets
+- Identifies high-confidence anticancer candidates
+- Outputs top and bottom ranked drugs
+- Optionally saves full ranking and strong-hit subsets
+
+Parameters
+----------
+Y_pred : array-like
+    Model predictions for drug response values.
+
+drug_metadata_filtered : DataFrame
+    Cleaned metadata containing drug names and targets.
+
+common_indices : Index or array-like
+    Shared drug identifiers between datasets.
+
+is_noncancer : Series or array-like
+    Boolean mask identifying noncancer drugs.
+
+save_dir : str or None
+    Directory to save ranking outputs. If None, results are not saved.
+
+Returns
+-------
+dict
+    Contains:
+    - auc_score : array of computed AUC-like scores
+    - results_df : ranked drug table
+    - strong_hits : subset of high-scoring candidate drugs
+"""
+
 def auc_drug_ranking_pipeline(
     Y_pred,
     drug_metadata_filtered,
@@ -20,10 +63,6 @@ def auc_drug_ranking_pipeline(
     is_noncancer,
     save_dir=None
 ):
-    """
-    Full Drug Ranking pipeline:
-    - 
-    """ 
 
     # AUC-like killing score
     auc_score = np.mean(Y_pred < -0.5, axis=1)

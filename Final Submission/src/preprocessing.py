@@ -10,19 +10,84 @@ from scipy.stats import pearsonr, spearmanr
 from adjustText import adjust_text
 from sklearn.ensemble import RandomForestRegressor
 
-
 #---- Preprocessing Stage -----#
+"""
+Data Loading and Preprocessing Pipeline
+
+Prepares matched feature (X) and response (Y) matrices for downstream modeling
+by integrating log-fold change data with drug metadata.
+
+This pipeline performs full data harmonization including cleaning, alignment,
+encoding, and train/test splitting based on biological drug categories.
+
+Processing steps:
+- Loads log-fold change matrix and drug metadata
+- Removes rows/columns with missing values
+- Standardizes identifiers across datasets (whitespace cleanup)
+- Aligns drugs present in both datasets
+- Constructs response matrix (Y) as drug-by-feature transpose
+- Handles missing target annotations
+- One-hot encodes drug target labels
+- Aggregates duplicate target encodings per drug
+- Synchronizes feature and response matrices
+- Splits dataset into:
+  - Training set: targeted cancer drugs
+  - Test set: noncancer drugs
+
+This ensures biologically meaningful separation between model training
+and evaluation sets.
+
+Parameters
+----------
+logfold_file : str
+    Path to log-fold change matrix CSV (features × drugs).
+
+metadata_file : str
+    Path to drug metadata CSV containing target and drug category annotations.
+
+Returns
+-------
+dict
+    Dictionary containing:
+
+    X_train : ndarray
+        Feature matrix for targeted cancer drugs.
+
+    Y_train : ndarray
+        Response matrix for targeted cancer drugs.
+
+    X_test : ndarray
+        Feature matrix for noncancer drugs.
+
+    Y_test : ndarray
+        Response matrix for noncancer drugs.
+
+    X_final : DataFrame
+        Full aligned feature matrix.
+
+    Y_final : DataFrame
+        Full aligned response matrix.
+
+    metadata : DataFrame
+        Raw drug metadata.
+
+    metadata_filtered : DataFrame
+        Cleaned and aligned metadata indexed by drug.
+
+    Y_matrix : DataFrame
+        Intermediate response matrix (drugs × features).
+
+    common_indices : Index
+        Shared drug identifiers across datasets.
+
+    is_cancer : Series
+        Boolean mask for targeted cancer drugs (training set).
+
+    is_noncancer : Series
+        Boolean mask for noncancer drugs (test set).
+"""
 def load_and_prepare_data(logfold_file,metadata_file):
-    """
-    Full Preprocessing pipeline:
-    - Remove missing cells in logfold data
-    - Keep drugs in both data sets
-    - Align metadata to drugs and fill in missing target labels 
-    - Make both X and Y matrices
-    - Synchronize the feature and response matrices
-    - Create the cancer and non-cancer groups
-    - Build training and testing sets 
-    """
+
     logfold_raw= pd.read_csv(logfold_file, index_col=0)
     drug_metadata= pd.read_csv(metadata_file)
 

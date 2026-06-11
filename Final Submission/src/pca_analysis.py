@@ -11,14 +11,62 @@ from scipy.stats import pearsonr, spearmanr
 from adjustText import adjust_text
 from sklearn.ensemble import RandomForestRegressor
 
+# --- PCA Biplot ---#
+"""
+PCA Biplot Pipeline (Drug Response + Target Integration)
+
+Performs principal component analysis (PCA) on both drug response profiles
+and drug target feature space to generate an integrated biplot visualization.
+
+This pipeline jointly visualizes:
+- Drug similarity structure in PCA space (based on response profiles)
+- Target feature structure (via PCA loadings)
+- Relationship between drug categories and biological targets
+
+Steps:
+- Standardizes drug response matrix (Y_matrix)
+- Performs PCA to extract drug latent space (scores)
+- Assigns drug categories from metadata
+- Performs PCA on target feature matrix (X_final)
+- Computes feature loadings and identifies most influential targets
+- Scales target loadings for visualization as directional vectors
+- Generates annotated biplot combining:
+  - Drug score scatter plot
+  - Target loading arrows
+  - Top contributing target labels
+
+This enables interpretation of how drug response structure aligns
+with underlying biological target space.
+
+Parameters
+----------
+Y_matrix : DataFrame
+    Drug-by-response matrix (drugs × features).
+
+X_final : DataFrame
+    One-hot encoded or processed target feature matrix.
+
+drug_metadata : DataFrame
+    Metadata containing drug labels and category annotations.
+
+show_plot : bool
+    If True, displays plot interactively.
+
+save_dir : str or None
+    Directory to save biplot image. If None, plot is shown.
+
+Returns
+-------
+dict
+    Contains:
+    - drug_df : PCA-transformed drug score DataFrame with categories
+    - explained_variance : PCA explained variance ratios
+    - top_targets : most influential target loadings
+    - pca_drugs : fitted PCA model for drugs
+    - pca_targets : fitted PCA model for targets
+    - figure : matplotlib figure object
+"""
 def pca_biplot_pipeline(Y_matrix, X_final, drug_metadata, show_plot=True,save_dir=None):
-    """
-    Full PCA biplot pipeline:
-    - PCA on drug response matrix
-    - PCA on target features
-    - Drug + target visualization (biplot)
-    - Returns objects for integration testing 
-    """
 
     # PCA on drug response matrix
     scaler = StandardScaler()
@@ -163,6 +211,42 @@ def pca_biplot_pipeline(Y_matrix, X_final, drug_metadata, show_plot=True,save_di
 
 
 # --- PCA Plots Using 5 PCs ---#
+"""
+Multi-Dimensional PCA Visualization Pipeline
+
+Generates multiple pairwise PCA scatter plots to explore structure
+across different principal component combinations.
+
+This function provides a diagnostic view of how drug clusters and
+categorical separations vary across different latent dimensions.
+
+Steps:
+- Validates requested PCA component pairs
+- Generates scatter plots for each valid component pair
+- Colors points by drug category
+- Arranges plots in a grid layout
+- Adds shared legend across subplots
+
+This helps assess stability and interpretability of PCA structure
+beyond the first two principal components.
+
+Parameters
+----------
+drug_df : DataFrame
+    PCA-transformed drug score DataFrame containing PC columns
+    and a "Category" column.
+
+components : list of tuple
+    List of PCA component pairs to visualize, e.g. [(1,2), (2,3)].
+
+save_dir : str or None
+    Directory to save figure. If None, plots are shown.
+
+Returns
+-------
+None
+    Displays or saves multi-panel PCA visualization.
+"""
 def plot_multiple_pca_views(drug_df, components=[(1,2), (2,3), (3,4), (4,5), (1,3)], save_dir=None):
     """
     Full PCA pipeline:

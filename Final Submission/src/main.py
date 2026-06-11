@@ -130,7 +130,7 @@ feature_names = loadings_results["feature_names"]
 loading_magnitudes = loadings_results["loading_magnitudes"]
 top_loading_indices = loadings_results["top_loading_indices"]
 
-#Results
+#
 anticancer_loadings_results = anticancer_target_loadings_pipeline(
     strong_drugs,
     X_loadings,
